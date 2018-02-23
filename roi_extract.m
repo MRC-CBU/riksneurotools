@@ -105,6 +105,13 @@ for s=1:length(Datafiles)
         
         [YM,mXYZmm] = spm_read_vols(VM);
         ROIfstem = spm_str_manip(ROIfiles{m},'rt');
+           
+        % Transform ROI XYZ in mm to voxel indices in data:
+        yXYZind = Yinv(1:3,1:3)*mXYZmm + repmat(Yinv(1:3,4),1,size(mXYZmm,2));
+        % Transform data XYZ in mm to voxel indices in mask:
+        mXYZind = Minv(1:3,1:3)*yXYZmm + repmat(Minv(1:3,4),1,size(yXYZmm,2));
+        % Transform data XYZ in mm to voxel indices in data:
+        yyXYZind = Yinv(1:3,1:3)*yXYZmm + repmat(Yinv(1:3,4),1,size(yXYZmm,2));
         
         YMdata = spm_get_data(VM,mXYZind); 
 
@@ -118,15 +125,7 @@ for s=1:length(Datafiles)
             YMdata(f) = 1;
             ROIvals{m} = [1];
         end
-    
-        % Transform ROI XYZ in mm to voxel indices in data:
-        yXYZind = Yinv(1:3,1:3)*mXYZmm + repmat(Yinv(1:3,4),1,size(mXYZmm,2));
-        % Transform data XYZ in mm to voxel indices in mask:
-        mXYZind = Minv(1:3,1:3)*yXYZmm + repmat(Minv(1:3,4),1,size(yXYZmm,2));
-        % Transform data XYZ in mm to voxel indices in data:
-        yyXYZind = Yinv(1:3,1:3)*yXYZmm + repmat(Yinv(1:3,4),1,size(yXYZmm,2));
-        
-        
+ 
         fprintf('\t\tDoing ROI (/%d):',length(ROIvals{m}));  
         for r=1:length(ROIvals{m})
             fprintf('.%d',r);
