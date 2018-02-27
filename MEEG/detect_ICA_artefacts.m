@@ -283,14 +283,25 @@ for r = 1:Nrefs(2)
     Out.allrem{2,r} = remove;
 end
 
-all_remove = [1:PCA_dim];
+% all_remove = [1:PCA_dim];
+all_remove = [];
+
 if Nrefs(1) > 0
-    all_remove = intersect(all_remove,cat(2,Out.allrem{1,:}));
+%    all_remove = intersect(all_remove,cat(2,Out.allrem{1,:}));
+    for r = 1:size(Out.allrem,2)
+        all_remove = [all_remove Out.allrem{1,r}];
+    end
 end
+
 if Nrefs(2) > 0
-    all_remove = intersect(all_remove,cat(2,Out.allrem{2,:}));
+%     all_remove = intersect(all_remove,cat(2,Out.allrem{2,:}));
+    for r = 1:size(Out.allrem,2)
+        all_remove = [all_remove Out.allrem{2,r}];
+    end
 end
- 
+
+all_remove = unique(all_remove);
+
 if ~isempty(all_remove)
     finalics  = setdiff([1:PCA_dim],all_remove);
     Out.TraMat    = iweights(:,finalics) * Out.weights(finalics,:);
