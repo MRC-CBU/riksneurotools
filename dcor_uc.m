@@ -23,7 +23,7 @@ R=dcovXY / sqrt(dvarX * dvarY);
 
 df=(n*(n-3))/2 -1;
 T=sqrt(df).*(R./sqrt(1-R.^2));
-p = tcdf(T,df) %,'upper');
+p = tcdf(T,df,'upper');
 
 if R<0
     R=0;
