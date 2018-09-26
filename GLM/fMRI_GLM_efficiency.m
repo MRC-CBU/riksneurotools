@@ -18,7 +18,7 @@ function [e,sots,stim,X,df] = fMRI_GLM_efficiency(S);
 %
 % Function take one of:
 %
-%  1. cell array of stimulus onset times (SOTS), eg from SPM
+%  1. cell array of stimulus onset times (SOTS), and possibly durations, eg from SPM
 %  2. vector of stimulus codes (ie order of events) (if onset times not calculated)
 %  3. a transition matrix in order to generate 1+2 (if no onsets or stimulus train available)
 %
@@ -28,7 +28,8 @@ function [e,sots,stim,X,df] = fMRI_GLM_efficiency(S);
 %    S.CM = Cell array of T or F contrast matrices (NOTE THAT THE L1 NORM OF CONTRASTS SHOULD 
 %           MATCH IN ORDER TO COMPARE THEIR EFFICIENCIES, EG CM{1}=[1 -1 1 -1]/2 CAN BE 
 %           COMPARED WITH CM{2}=[1 -1 0 0] BECAUSE NORM(Cm{i},1)==2 IN BOTH CASES
-%    S.sots    = cell array of onset times for each event-type in units of scans (OPTIONAL; SEE ABOVE)
+%    S.sots    = cell array of onset times for each condition in units of scans (OPTIONAL; SEE ABOVE)
+%    S.durs    = cell array of durations for each condition in units of scans (OPTIONAL; SEE ABOVE)
 %    S.stim    = vector of events (OPTIONAL; SEE ABOVE)
 %    S.TM.prev = Np x Nh transition matrix history of Np possible sequences of the previous Nh events (OPTIONAL; SEE ABOVE)
 %    S.TM.next = Np x Nj transition matrix of probabilities of each of next Nj event-types for each of Np possible histories (OPTIONAL; SEE ABOVE)
@@ -49,7 +50,20 @@ function [e,sots,stim,X,df] = fMRI_GLM_efficiency(S);
 %
 % Examples:
 %
-%   1. Randomised design with 2 event-types, canonical HRF interest in both differential   and common effects
+%   0. Simple user-specified blocked design
+%
+% S=[];
+% S.TR = 1; 
+% S.Ns = 1000;
+% S.sots{1} = [0:48:1000];   % Condition 1 onsets
+% S.sots{2} = [16:48:1000];  % Condition 2 onsets
+% S.durs{1} = 16; S.durs{2} = 16;  % Both 16s epochs
+% S.CM{1} = [1 -1]; S.CM{2} = [1 -1]; % Contrast conditions, and conditions vs baseline
+% 
+% [e,sots,stim,X,df] = fMRI_GLM_efficiency(S);
+% 
+%
+%   1. Code-generated, randomised design with 2 event-types, canonical HRF interest in both differential and common effects
 %
 % S=[];
 % S.Ni = 2000;
@@ -157,6 +171,21 @@ catch
 end
 
 try
+    durs = S.durs;
+    for j = 1:length(sots)
+        if length(durs{j}) == 1
+            durs{j} = repmat(durs{j},1,length(sots{j}));
+        elseif length(durs{j}) ~= length(sots{j})
+            error('Number of durations (%d) does not match number of onsets (%d) for condition %d',length(durs{j}),length(ons{j}),j)
+        end
+    end
+catch
+    for j = 1:length(sots)
+        durs{j} = zeros(1,length(sots{j}));  % assume events if durations not specified       
+    end
+end
+
+try
     bf = S.bf;
 catch
     bf = 'hrf';  % SPM's canonical HRF
@@ -199,7 +228,10 @@ X = zeros(Ns,Nj*Nk);
 for j = 1:Nj
 
     u = zeros(Nt,1);
- 	u(round(sots{j}*st)+1) = 1;
+    for i = 1:length(sots{j})
+        o = [sots{j}(i)*st : st : (sots{j}(i)+durs{j}(i))*st];
+        u(round(o)+1) = 1;
+    end
     
     for k = 1:Nk
         b = conv(u,bf(:,k));
