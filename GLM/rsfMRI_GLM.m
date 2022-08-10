@@ -101,6 +101,10 @@ try VolterraLag = S.VolterraLag; catch
     VolterraLag = 5;  % artifacts can last up to 5 TRs = 10s, according to Power et al (2013)
 end
 
+try Satterwhaite = S.Satterwhaite; catch
+    Satterwhaite = 0;  % Satterwhaite special case of Volterra above
+end
+
 try pflag   = S.pflag; catch     pflag = 0;   end
 try svd_thr = S.svd_thr; catch svd_thr = .99; end
 
@@ -117,10 +121,15 @@ Nr = size(Y,2);
 
 
 %% Create a DCT bandpass filter (so filtering part of model, countering Hallquist et al 2013 Neuroimage)
-K   = spm_dctmtx(Ns,Ns);
-nHP = fix(2*(Ns*TR)/HPC + 1);
-nLP = fix(2*(Ns*TR)/LPC + 1);
-K   = K(:,[2:nHP nLP:Ns]);      % Remove initial constant
+KM   = spm_dctmtx(Ns,Ns); K = [];
+if HPC > 0
+    nHP = fix(2*(Ns*TR)/HPC + 1);
+    K   = KM(:,[2:nHP]);  % Remove initial constant
+end
+if LPC > 0
+    nLP = fix(2*(Ns*TR)/LPC + 1);
+    K   = [K KM(:,[nLP:Ns])];      % Remove initial constant
+end
 Nk  = size(K,2);
 fprintf('Bandpass filter using %d dfs (%d left)\n',Nk,Ns-Nk)
 
@@ -156,7 +165,7 @@ if ~isfield(S,'GlobMove')
 else
     cdM = S.GlobMove;
     try M = S.M; catch M=[]; end
- end
+end
 
 if ~isempty(SpikeMovAbsThr)  % Absolute movement threshold 
 %    rms  = sqrt(mean(dM(:,1:3).^2,2));   % if want translations only    
@@ -212,19 +221,27 @@ end
 
 
 %% Create expansions of movement parameters
-% Standard differential + second-order expansion (a la Satterthwaite et al, 2012)
-% sM  = []; for m=1:6; for n=m:6; sM  = [sM M(:,m).*M(:,n)];    end; end   % Second-order expansion
-% sdM = []; for m=1:6; for n=m:6; sdM = [sdM dM(:,m).*dM(:,n)]; end; end   % Second-order expansion of derivatives
-% aM  = [M dM sM sdM];
 
-% Above commented bits are subspace of more general Volterra expansion
 %U=[]; for c=1:6; U(c).u = M(:,c); U(c).name{1}=sprintf('m%d',c); end; [aM,aMname] = spm_Volterra(U,[1 0 0; 1 -1 0; 0 1 -1]',2);
 %U=[]; for c=1:6; U(c).u = M(:,c); U(c).name{1}=sprintf('m%d',c); end; [aM,aMname] = spm_Volterra(U,[1 0; 1 -1; 0 1]',2); %Only N and N+1 needed according to Satterthwaite et al 2013
-bf = eye(VolterraLag);  % artifacts can last up to 5 TRs = 10s, according to Power et al (2013)
+if VolterraLag > 1
+    bf = eye(VolterraLag);  % artifacts can last up to 5 TRs = 10s, according to Power et al (2013)
 %    bf = [1 0 0 0 0; 1 1 0 0 0; 1 1 1 0 0; 1 1 1 1 0; 1 1 1 1 1];  % only leads to a few less modes below, and small compared to filter anyway!
-bf = [bf; diff(bf)];
-U=[]; for c=1:size(M,2); U(c).u = M(:,c); U(c).name{1}='c'; end; aM = spm_Volterra(U,bf',2);    
-aM = spm_en(aM,0);
+    bf = [bf; diff(bf)];
+    U=[]; for c=1:size(M,2); U(c).u = M(:,c); U(c).name{1}='c'; end; aM = spm_Volterra(U,bf',2);    
+    aM = spm_en(aM,0);
+else
+    if Satterwhaite
+        % Standard differential + second-order expansion (a la Satterthwaite et al, 2012)
+        sM  = []; for m=1:6; fsM = [sM M(:,m).*M(:,m)];    end; % Squares
+        sdM = []; for m=1:6; sdM = [sdM dM(:,m).*dM(:,m)]; end; % Squares of derivatives
+%         sM  = []; for m=1:6; for n=m:6; sM  = [sM M(:,m).*M(:,n)]; end; end   % Second-order expansion including cross-terms
+%         sdM = []; for m=1:6; for n=m:6; sdM = [sdM dM(:,m).*dM(:,n)]; end; end   % Second-order expansion of derivatives including cross-terms
+        aM  = [M dM sM sdM];
+    else
+        aM = M;
+    end
+end
 
 %% Add Global? (Note: may be passed by User in S.C anyway)
 % (recommended by Rik and Power et al, 2013, though will entail negative
@@ -239,7 +256,7 @@ C = spm_en(C,0);
 
 XM  = spm_en(ones(Ns,1));  % constant term
 X1  = [XM K RSP];          % Regressors that don't want to SVD
-X0  = [aM C];              % Regressors that will SVD below
+X0  = [C aM];              % Regressors that will SVD below
 %X1  = [XM K C RSP];        % Regressors that don't want to SVD
 %X0  = [aM];                % Regressors that will SVD below
 X0r   = X0;
@@ -252,15 +269,15 @@ if ~isempty(X0)
     % ...could explore some L1 (eg LASSO) or L2 regularisation of over-parameterised model instead,
     % but LASSO takes ages (still working on possible L2 approach with spm_reml)
     if svd_thr < 1
-        [U,S] = spm_svd(X0,0);
-        S     = diag(S).^2; S = full(cumsum(S)/sum(S));
-        Np    = find(S > svd_thr); Np = Np(1);
-        X0r   = full(U(:,1:Np));
-        fprintf('%d SVD modes left (from %d original terms) - %4.2f%% variance of correlation explained\n',Np,size(X0,2),100*S(Np))
+        [U,EV] = spm_svd(X0,0);
+        EV     = diag(EV).^2; S = full(cumsum(EV)/sum(EV));
+        Np     = find(EV > svd_thr); Np = Np(1);
+        X0r    = full(U(:,1:Np));
+        fprintf('%d SVD modes left (from %d original terms) - %4.2f%% variance of correlation explained\n',Np,size(X0,2),100*EV(Np))
     end
 end
 
-X0r = [K RSP X0r XM]; % Reinsert mean
+X0r = [X0r RSP K XM]; % Reinsert mean
 Nc  = size(X0r,2);
 
 if Nc >= Ns; error('Not enough dfs (scans) to estimate'); 
