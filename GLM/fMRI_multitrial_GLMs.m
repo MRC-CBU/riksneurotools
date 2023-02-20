@@ -1,4 +1,4 @@
-function [Beta,res,X,Z] = fMRI_multitrial_GLMs(S);
+function [Beta,res,Z] = fMRI_multitrial_GLMs(S);
 
 % Matlab function to return single-trial Betas from GLM using LSA, LSS or L2-regularised LSA
 % fit to fMRI timeseries from a scan x ROI data matrix, given onsets and durations of events
@@ -8,7 +8,7 @@ function [Beta,res,X,Z] = fMRI_multitrial_GLMs(S);
 % Inputs (fields of structure S):
 %
 %    Required:
-%           S.d = Ns scan x Nr ROI (or voxels) matrix of fMRI data
+%           S.d = Ns scan x Nr ROI (or Nr voxels) matrix of fMRI data
 %           S.events = cell array of event onsets and durations for each condition 
 %
 %    Optional:
@@ -26,19 +26,15 @@ function [Beta,res,X,Z] = fMRI_multitrial_GLMs(S);
 %           S.bf = HRF basis functions (default = SPM's canonical HRF)
 %           S.HC = highpass cutoff for filtering (default=128s)
 %           S.zflag = whether to Z-score regressors (default=0=no) 
-%           S.PreWhiten = whether to use SPM's AR(1) pre-whitening
-%                         (for LSS, default PreWhiten=1 is from LSA, to
-%                         save time; set PreWhiten=2 to run on each LSS
-%                         model, but may take a long time!)
 %
 % Outputs:
 %
 %    Betas = Cell array of parameter estimates for each trial-by-voxel for each S.coi
 %    res   = Matrix of scan-by-voxel of residuals (and ...-by-trial with LSS)
-%    X     = design matrix for conditions of interest (Z-scored if zflag set). Note for LSS, X is LSA X
-%    Z     = design matrix for all effects (Z-scored if zflag set). Note for LSS, X is LSA X
-%
-% Added pre-whitening (SPM-style) 2/2/21.
+%    Z     = design matrix (Z-scored if zflag set)
+
+% Future additions
+%   Could add AR(1) modelling
 
 
 try
@@ -108,8 +104,7 @@ try
 catch
     coi = 1:Nj;
 end
-Nji = length(coi);
-           
+
 %nams = S.events.nam;
 
 try
@@ -132,7 +127,7 @@ if isstr(bf)
     xBF.dt     = dt;
     xBF.name   = bf;
     xBF.length = 30;
-    xBF.order  = 30/TR;
+    xBF.order  = round(30/TR);
     bf = spm_get_bf(xBF);
     bf = bf.bf;
     bf = bf/max(bf(:));
@@ -150,8 +145,10 @@ end
 if HC > 0
     HO = fix(2*(Ns*TR)/HC+1);
     K  = spm_dctmtx(Ns,HO);
+%    df = df - size(K,2);
 else
-    K = ones(Ns,1);  % Just constant term
+     K = [];
+%    K  = eye(Ns);
 end
 
 try 
@@ -166,6 +163,10 @@ catch
     meth = 'LSA';
 end
 
+if strcmp(meth,'LSS') & Nk>1
+    error('Not implemented LSS yet for more than 1 basis function')
+end
+    
 try 
     lambda = S.lambda;
 catch
@@ -179,35 +180,12 @@ catch
 end
 
 
-try 
-    PreWhiten = S.PreWhiten;
-catch
-    PreWhiten = 0;  % Default not to pre-whiten
-end
-
-if PreWhiten
-    if Nr < Ns 
-%        warning('Need appreciable number of voxels (> number of scans) to estimate data covariance for pre-whitening')
-    end
-    t     = (0:(Ns - 1))*TR;                     % time
-    e     = 2.^(floor(log2(TR/4)):log2(64));     % time constants (seconds)
-    QC    = {};                                  % dictionary of components
-    for i = 1:length(e)
-        for j = 0:1
-            QC{end + 1} = toeplitz((t.^j).*exp(-t/e(i)));
-        end
-    end
-    
-    C = cov(d'); % data covariance over scans (assumes reasonable number of voxels!)
-end
-
-
 %% Create GLMs
 
 s = [T0:T:Nt];
 
 X = []; X0 = []; Beta = {}; res = [];
-
+ 
 switch meth
     case 'LSU'      
         for j = 1:Nj
@@ -226,41 +204,39 @@ switch meth
                     X0(:,end+1) = b(s);
                 end               
             end
+        end            
+
+        Z = [X X0 XC K];
+        if zflag         
+            Z = zscore(Z);   % zscore works on constant column
+        end
+%        figure,imagesc(Z);
+        
+%        Adjusting data and model by X0 before regularisation gives same answer as below
+%        
+%         X0 = Z(:,(Nji+1):end); X = Z(:,1:Nji);
+%         Z = orthog(X,X0);
+%         ad = orthog(d,X0);   
+%         pX = inv(Z'*Z + lambda*eye(Nji))*Z';
+%         B = pX*ad;
+        
+        Nji = length(coi)*Nk;
+        if lambda == 0
+            pX = pinv(Z);  % Needed for LSA below, so use here too
+        else    
+            Np = size(Z,2);
+            R = [[eye(Nji) zeros(Nji,Np-Nji)]; zeros(Np-Nji,Np)];       
+            pX = inv(Z'*Z + lambda*R)*Z';   
         end
         
-        Z = [X X0 XC];
-        if zflag
-            Z = zscore(Z); 
-            X = zscore(Z);
-        end
-        Z = [Z K];
-        %        figure,imagesc(Z);        
+        B = pX*d;
         
-        if PreWhiten
-            V = rik_reml(C,Z,QC,1,0,4);   % rik_reml is just version of spm_reml with fprintf commented out to speed up
-            W = spm_inv(spm_sqrtm(V));
-            B = pinv(W*Z)*(W*d);
-
-            res = W*d - W*Z*B;
-        else
-            
-            if lambda == 0
-                pX = pinv(Z);  % Needed for LSA below, so use here too
-            else
-                Np = size(Z,2);
-                R = [[eye(Nji) zeros(Nji,Np-Nji)]; zeros(Np-Nji,Np)];
-                pX = inv(Z'*Z + lambda*R)*Z';
-            end           
-            
-            B = pX*d;
-
-            res = d - Z*B;
-        end
-
         for j = 1:Nji
             Beta{j} = B(j,:);
-        end       
-     
+        end
+        
+        res = d - Z*B;
+    
     case 'LSA'
         ri = {}; lastri = 0;
         for j = 1:Nj
@@ -292,59 +268,52 @@ switch meth
                 end
             end
         end
+      
+        Z = [X X0 XC K];
+        if zflag         
+            Z = zscore(Z);   % zscore works on constant column
+        end
+%        figure,imagesc(Z);
         
-        Z = [X X0 XC];
-        if zflag
-            Z = zscore(Z);  
-            X = zscore(X);
+        Nji = length(coi)*Nk; 
+        
+        if lambda == 0
+            pX = pinv(Z);  % Needed for LSA below, so use here too
+        else    
+            Np = size(Z,2);
+            R = [[eye(Nji) zeros(Nji,Np-Nji)]; zeros(Np-Nji,Np)];       
+            pX = inv(Z'*Z + lambda*R)*Z';   
         end
-        Z = [Z K];
-        %        figure,imagesc(Z);
-               
-        if PreWhiten
-            V = rik_reml(C,Z,QC,1,0,4);   % rik_reml is just version of spm_reml with fprintf commented out to speed up
-            W = spm_inv(spm_sqrtm(V));
-            B = pinv(W*Z)*(W*d);
-            
-            res = W*d - W*Z*B;
-        else
-            
-            if lambda == 0
-                pX = pinv(Z);  
-            else
-                Np = size(Z,2);
-                R = [[eye(Nji) zeros(Nji,Np-Nji)]; zeros(Np-Nji,Np)];
-                pX = inv(Z'*Z + lambda*R)*Z';
-            end
-            
-            B = pX*d;
-            res = d - Z*B;
-        end
+        
+        B = pX*d;
         
         for j = 1:Nji
             Beta{j} = B(ri{j},:);
         end
 
+        res = d - Z*B;
 
     case 'LSS'
         ri = {}; lastri = 0;
         for j = 1:Nj
             if ismember(j,coi)
                 Ni = length(sots{j});
-                u  = zeros(Nt,Ni);
-                for i = 1:Ni
-                    t1 = round(sots{j}(i)*st)+1;
-                    t2 = t1+round(durs{j}(i)*st);
-                    u(t1:t2,i) = 1;
-                end
-                ri{find(coi==j)} = [1:(Ni*Nk)] + lastri;
-                lastri = ri{find(coi==j)}(end);
-                for i = 1:Ni
-                    for k = 1:Nk
-                        b = conv(u(:,i),bf(:,k));
-                        X(:,end+1) = b(s);
+                if Ni > 0
+                    u  = zeros(Nt,Ni);
+                    for i = 1:Ni
+                        t1 = round(sots{j}(i)*st)+1;
+                        t2 = t1+round(durs{j}(i)*st);
+                        u(t1:t2,i) = 1;
                     end
-                end              
+                    ri{find(coi==j)} = [1:(Ni*Nk)] + lastri;
+                    lastri = ri{find(coi==j)}(end);
+                    for i = 1:Ni
+                        for k = 1:Nk
+                            b = conv(u(:,i),bf(:,k));
+                            X(:,end+1) = b(s);
+                        end
+                    end
+                end
             else
                 Ni = 1;
                 u = zeros(Nt,1);
@@ -357,22 +326,12 @@ switch meth
                 end
             end
         end
-
-        if PreWhiten % For LSS, save time with prewhitening from LSA
-            Z = [X X0 XC];
-            if zflag
-                Z = zscore(Z);
-            end
-            Z = [Z K];
-            V = rik_reml(C,Z,QC,1,0,4);   % rik_reml is just version of spm_reml with fprintf commented out to speed up
-            W = spm_inv(spm_sqrtm(V));
-        end
-            
+        
         Np = size(X,2); r=0;
-        for j = 1:Nji
+        for j = 1:length(coi)
             Ni = length(sots{coi(j)});  
             Xl = [];
-            for k = setdiff(1:Nji,j) 
+            for k = setdiff(1:length(coi),j) 
                 Xl      = [Xl sum(X(:,ri{k}),2)];
             end
             for i = 1:Ni
@@ -382,46 +341,24 @@ switch meth
                     Xs(:,2) = sum(X(:,setdiff(ri{j},ri{j}(i))),2);
                 end
                 
-                Z = [Xs Xl X0 XC];
+                Z = [Xs Xl X0 XC K];
                 if zflag
-                    Z = zscore(Z);   
-                    X = zscore(X);
+                    Z = zscore(Z);   % zscore works on constant column
                 end
-                Z = [Z K];
                 %        figure,imagesc(Z);
                 
-                if PreWhiten
-                    if PreWhiten == 2 % hidden option - may take long time!
-                        V = rik_reml(C,Z,QC,1,0,4);   % rik_reml is just version of spm_reml with fprintf commented out to speed up
-                        W = spm_inv(spm_sqrtm(V));
-                    end
-                     
-                    B = pinv(W*Z)*(W*d);
-                   
-                    r = r+1;
-                    res(:,:,r) = W*d - W*Z*B;
-                else
-                    
-                    if lambda == 0
-                        pX = pinv(Z);
-                    else
-                        warning('Not checked L2-regularised LSS (not very meaningful!?')
-                        Np = size(Z,2);
-                        R = [[eye(Nji) zeros(Nji,Np-Nji)]; zeros(Np-Nji,Np)];
-                        pX = inv(Z'*Z + lambda*R)*Z';
-                    end
-                    
-                    B = pX*d;
-                    
-                    r=r+1;
-                    res(:,:,r) = d - Z*B;
-                end
+                pX = pinv(Z);  % Needed for LSA below, so use here too
+               
+                B = pX*d;
                 
+                r=r+1;
+                res(:,:,r) = d - Z*B;
+        
                 Beta{j}(i,:) = B(1,:);
             end
         end
         
-    otherwise
+    otherwise   
         error('unknown estimation method')
 end
 
