@@ -84,6 +84,8 @@ try SpikeDatRelThr = S.SpikeDatRelThr; catch
 %    SpikeDatRelThr = 5;     % 5 SDs of mean?
 end
 
+% test
+
 try SpikeLag = S.SpikeLag; catch
     SpikeLag = 1;
 %    SpikeLag = 5;     % 5 TRs after spike?
