@@ -160,7 +160,7 @@ for sub = 1:Nsub
         %bc = mean(d(:)); % Don't want to mean-correct each channel/condition separately?
         bc = nan(length(Ic{m}),Nsam,Ncon);
         for c = 1:Ncon
-            bc(:,:,c) = repmat(mean(D(Ic{m},[1:find(D.time==0)],c),2),1,Nsam);
+            bc(:,:,c) = repmat(mean(D(Ic{m},[1:indsample(D, 0)],c),2),1,Nsam);
         end
         
         d = D(Ic{m},ss,ci);
