@@ -1,4 +1,4 @@
-function [X]=batch_spm_anova(S);
+function [X, SPM]=batch_spm_anova(S)
 
 % A general function for N-way mixed (within+between subjects) ANOVAs in SPM5/SPM8
 % (though assumes same number of conditions per group)
@@ -39,6 +39,8 @@ function [X]=batch_spm_anova(S);
 %
 % Updated 11-3-14 to allow user-specified regressors that span all groups
 % Updated 18-6-13 to handle masking properly (note previous S.maskimg is now S.mask)
+%
+% djm, 2026: return SPM, and small change to covariance modelling on l.228
 
 try 
     imgfiles = S.imgfiles;
@@ -223,7 +225,7 @@ for g=1:ngrp
     if nsph_flag ~= 0      % ie, unless user turns off...
 
     % unequal covariances (within conditions; independent between groups)
-     if nsph_flag==1 | (ncon>2 & ns>1)
+     if nsph_flag==1 || (ncon>2 && ns>1) || (ncon>1 && ngrp>1 && ns>1) % djm: added final term
       nsph_flag = 1;
       for c1 = 1:ncon
         for c2 = (c1+1):ncon
@@ -355,5 +357,5 @@ if ~isempty(contrasts)
     end
 end
 
-spm_contrasts(SPM);
+SPM=spm_contrasts(SPM); % djm
 
